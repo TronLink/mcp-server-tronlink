@@ -1,0 +1,38 @@
+{
+  "name": "@tronlink/mcp-server-tronlink",
+  "version": "0.1.0",
+  "description": "TronLink MCP Server - MCP server for controlling TronLink browser extension via AI agents",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "mcp-server-tronlink": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch",
+    "start": "node dist/index.js",
+    "start:e2e": "TL_MODE=e2e node dist/index.js",
+    "start:prod": "TL_MODE=prod node dist/index.js",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@noble/curves": "^2.0.1",
+    "@noble/hashes": "^2.0.1",
+    "@tronlink/mcp-core": "file:../tronlink-mcp-core",
+    "playwright": "^1.49.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/ws": "^8.18.0",
+    "typescript": "^5.3.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
