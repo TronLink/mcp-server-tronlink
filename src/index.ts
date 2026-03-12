@@ -2,6 +2,9 @@
 
 import * as path from 'node:path';
 import * as fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // All environment variables are injected via MCP JSON config (env field).
 // See .env.example for the full list of supported variables.

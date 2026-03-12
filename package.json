@@ -23,7 +23,7 @@
   "dependencies": {
     "@noble/curves": "^2.0.1",
     "@noble/hashes": "^2.0.1",
-    "@tronlink/tronlink-mcp-core": "@tronlink/tronlink-mcp-core",
+    "@tronlink/tronlink-mcp-core": "^0.1.0",
     "playwright": "^1.49.0",
     "ws": "^8.18.0"
   },
