@@ -10,6 +10,7 @@ import {
   listWallets,
   setActiveWallet,
   resolveSecureWallet,
+  autoGenerateWallet,
 } from './wallet.js';
 
 // ── Types ────────────────────────────────────────────────
@@ -79,19 +80,67 @@ export function getWalletToolDefinitions(
         properties: {},
       },
       handler: wrapHandler(async () => {
-        const wallets = await listWallets(network);
+        let wallets: Awaited<ReturnType<typeof listWallets>>;
+        try {
+          wallets = await listWallets(network);
+        } catch {
+          // No password or no config dir — same as empty
+          wallets = [];
+        }
         if (wallets.length === 0) {
           return {
             wallets,
             message:
-              'No wallets configured. Two options:\n' +
-              '  Option A (auto): Restart the MCP server — a wallet will be auto-generated\n' +
+              'No wallets configured. IMPORTANT: Ask the user which option they prefer before proceeding.\n' +
+              '  Option A (auto): Call tl_wallet_create to auto-create a wallet under ~/.agent-wallet/\n' +
               '  Option B (manual):\n' +
-              '    1. agent-wallet start local_secure --generate --wallet-id main\n' +
-              '    2. Add AGENT_WALLET_PASSWORD to your .mcp.json env and restart',
+              '    1. Install agent-wallet and create an account locally\n' +
+              '    2. Add AGENT_WALLET_PASSWORD to your .mcp.json env\n' +
+              '    3. Restart Claude Code',
           };
         }
         return { wallets };
+      }),
+    },
+    {
+      name: `${prefix}_wallet_create`,
+      description:
+        'Auto-generate an encrypted wallet (local_secure). Use this when no wallet exists and the user wants automatic setup. ' +
+        'After creation, the wallet is immediately available for on-chain, gasfree, and multisig operations. ' +
+        'Fund the generated address with TRX before performing write operations.',
+      inputSchema: {
+        type: 'object',
+        properties: {},
+      },
+      handler: wrapHandler(async () => {
+        const address = await autoGenerateWallet(network, (msg) => {
+          // Logger messages are captured but not returned — result is in the response
+          process.stderr.write(`[tronlink-mcp] ${msg}\n`);
+        });
+        if (!address) {
+          return {
+            created: false,
+            message:
+              'Wallet already exists or password is missing for existing wallets.\n' +
+              'Use tl_wallet_list to see existing wallets, or set AGENT_WALLET_PASSWORD in .mcp.json env.',
+          };
+        }
+
+        // Propagate newly created wallet into live capabilities
+        if (onWalletSwap) {
+          try {
+            const newWallet = await resolveSecureWallet(network);
+            onWalletSwap(newWallet);
+          } catch {
+            // Capabilities will pick up the wallet on next init
+          }
+        }
+
+        return {
+          created: true,
+          address,
+          message: `Encrypted wallet created: ${address}\nFund this address with TRX before performing write operations.`,
+        };
       }),
     },
     {

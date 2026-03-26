@@ -17,7 +17,7 @@ import {
   KNOWLEDGE_DIR,
 } from '@tronlink/tronlink-mcp-core';
 import type { Wallet } from '@bankofai/agent-wallet';
-import { resolveSecureWallet, autoGenerateWallet } from './wallet.js';
+import { resolveSecureWallet } from './wallet.js';
 import { getWalletToolDefinitions } from './wallet-tools.js';
 import { TronLinkSessionManager } from './session-manager.js';
 import { TronLinkBuildCapability } from './capabilities/build.js';
@@ -74,6 +74,21 @@ function logWalletInfo(
   logger('════════════════════════════════════════════');
 }
 
+function buildWalletSetupMessage(): string {
+  return (
+    'Wallet not available. IMPORTANT: Ask the user which option they prefer before proceeding.\n' +
+    '  Option A (auto): Call tl_wallet_create to auto-create a wallet under ~/.agent-wallet/\n' +
+    '  Option B (manual):\n' +
+    '    1. Install agent-wallet and create an account locally\n' +
+    '    2. Add AGENT_WALLET_PASSWORD to your .mcp.json env\n' +
+    '    3. Restart Claude Code'
+  );
+}
+
+function isWalletDependentTool(name: string): boolean {
+  return name.startsWith('tl_chain_') || name.startsWith('tl_gasfree_');
+}
+
 async function main() {
   const logger = (msg: string) => process.stderr.write(`[tronlink-mcp] ${msg}\n`);
 
@@ -97,30 +112,42 @@ async function main() {
   const chainGridUrl = process.env.TL_TRONGRID_URL;
   const tronNetwork = detectTronNetwork(chainGridUrl);
 
-  // Resolve the main wallet (for on-chain operations)
-  // Two paths: auto-create (zero-config) or manual (CLI + AGENT_WALLET_PASSWORD)
+  // Resolve the main wallet — when any capability needs signing
+  const gasFreeBaseUrl = process.env.TL_GASFREE_BASE_URL;
+  const msBaseURL = process.env.TL_MULTISIG_BASE_URL;
+  const needsWallet = !!(chainGridUrl || gasFreeBaseUrl || msBaseURL);
+  let walletSetupRequired = false;
+  const walletSetupMessage = buildWalletSetupMessage();
+
   let mainWallet: Wallet | undefined;
-  try {
-    mainWallet = await resolveSecureWallet(tronNetwork);
-    const addr = await mainWallet.getAddress();
-    logWalletInfo(logger, addr, tronNetwork, chainGridUrl);
-  } catch {
-    // No wallet yet — try auto-create
-    const autoAddr = await autoGenerateWallet(tronNetwork, logger);
-    if (autoAddr) {
-      try {
-        mainWallet = await resolveSecureWallet(tronNetwork);
-        logWalletInfo(logger, autoAddr, tronNetwork, chainGridUrl);
-      } catch (err2) {
-        const detail = err2 instanceof Error ? err2.message : String(err2);
-        logger(`Auto-created wallet but failed to load: ${detail}`);
+  if (needsWallet) {
+    try {
+      mainWallet = await resolveSecureWallet(tronNetwork);
+      const addr = await mainWallet.getAddress();
+      logWalletInfo(logger, addr, tronNetwork, chainGridUrl);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const isNoPassword = msg.includes('No wallet password available');
+      const isNoWallet = msg.includes('No wallets in encrypted storage');
+
+      if (isNoPassword || isNoWallet) {
+        walletSetupRequired = true;
+        // No wallet — show guidance, let user trigger creation via MCP tool or CLI
+        logger('════════════════════════════════════════════');
+        logger('No wallet configured. Choose one option:');
+        logger('');
+        logger('  Option A — Auto-create via MCP tool:');
+        logger('    Call tl_wallet_create to auto-create a wallet under ~/.agent-wallet/');
+        logger('');
+        logger('  Option B — Manual setup:');
+        logger('    1. Install agent-wallet and create an account locally');
+        logger('    2. Add AGENT_WALLET_PASSWORD to your .mcp.json env');
+        logger('    3. Restart the MCP server');
+        logger('════════════════════════════════════════════');
+      } else {
+        // Real error (wrong password, decryption failure, etc.)
+        logger(`Wallet error: ${msg}`);
       }
-    } else {
-      logger('No wallet configured. Two options:');
-      logger('  Option A (auto): Remove existing wallet files and restart to auto-generate');
-      logger('  Option B (manual):');
-      logger('    1. agent-wallet start local_secure --generate --wallet-id main');
-      logger('    2. Add AGENT_WALLET_PASSWORD to your .mcp.json env and restart');
     }
   }
 
@@ -156,7 +183,6 @@ async function main() {
   }
 
   // Set up multisig capability if credentials provided
-  const msBaseURL = process.env.TL_MULTISIG_BASE_URL;
   const msSecretId = process.env.TL_MULTISIG_SECRET_ID;
   const msSecretKey = process.env.TL_MULTISIG_SECRET_KEY;
   const msChannel = process.env.TL_MULTISIG_CHANNEL;
@@ -183,7 +209,7 @@ async function main() {
   }
 
   // Set up on-chain capability if wallet is available
-  const onChainCapability =
+  let onChainCapability: TronLinkOnChainCapability | undefined =
     mainWallet && chainGridUrl
       ? new TronLinkOnChainCapability({
           wallet: mainWallet,
@@ -201,8 +227,7 @@ async function main() {
   }
 
   // Set up GasFree capability if configured
-  const gasFreeBaseUrl = process.env.TL_GASFREE_BASE_URL;
-  const gasFreeCapability =
+  let gasFreeCapability: TronLinkGasFreeCapability | undefined =
     gasFreeBaseUrl && mainWallet
       ? new TronLinkGasFreeCapability({
           baseUrl: gasFreeBaseUrl,
@@ -216,19 +241,29 @@ async function main() {
     logger(`GasFree enabled: ${gasFreeBaseUrl}`);
   }
 
+  // Mutable capabilities object — shared by reference with sessionManager.
+  // onWalletSwap can create missing capabilities after tl_wallet_create.
+  const capabilities: {
+    build?: typeof buildCapability;
+    stateSnapshot?: typeof stateSnapshot;
+    multiSig?: typeof multiSigCapability;
+    onChain?: TronLinkOnChainCapability;
+    gasFree?: TronLinkGasFreeCapability;
+  } = {
+    build: buildCapability,
+    stateSnapshot,
+    multiSig: multiSigCapability,
+    onChain: onChainCapability,
+    gasFree: gasFreeCapability,
+  };
+
   // Create session manager
   const sessionManager = new TronLinkSessionManager({
     extensionPath,
     mode,
     headless,
     slowMo,
-    capabilities: {
-      build: buildCapability,
-      stateSnapshot,
-      multiSig: multiSigCapability,
-      onChain: onChainCapability,
-      gasFree: gasFreeCapability,
-    },
+    capabilities,
   });
 
   // Register session manager
@@ -252,13 +287,44 @@ async function main() {
     },
   });
 
-  // Register wallet management tools with hot-swap callback
+  // Register wallet management tools with hot-swap callback.
+  // When capabilities were not created at startup (no wallet), create them now.
   const onWalletSwap = (newWallet: import('@bankofai/agent-wallet').Wallet) => {
-    if (onChainCapability) onChainCapability.swapWallet(newWallet);
-    if (gasFreeCapability) gasFreeCapability.swapWallet(newWallet);
-    // Only swap owner wallet; cosigner is preserved via ?? fallback in swapWallets()
+    // On-chain: swap or create
+    if (onChainCapability) {
+      onChainCapability.swapWallet(newWallet);
+    } else if (chainGridUrl) {
+      onChainCapability = new TronLinkOnChainCapability({
+        wallet: newWallet,
+        tronGridUrl: chainGridUrl,
+        tronGridApiKey: process.env.TL_TRONGRID_API_KEY,
+        cosignerWallet,
+        sunswapRouter: process.env.TL_SUNSWAP_ROUTER,
+        sunswapV3Router: process.env.TL_SUNSWAP_V3_ROUTER,
+        wtrxAddress: process.env.TL_WTRX_ADDRESS,
+      });
+      capabilities.onChain = onChainCapability;
+      logger(`On-chain mode enabled (late init): ${chainGridUrl}`);
+    }
+
+    // GasFree: swap or create
+    if (gasFreeCapability) {
+      gasFreeCapability.swapWallet(newWallet);
+    } else if (gasFreeBaseUrl) {
+      gasFreeCapability = new TronLinkGasFreeCapability({
+        baseUrl: gasFreeBaseUrl,
+        wallet: newWallet,
+        apiKey: process.env.TL_GASFREE_API_KEY,
+        apiSecret: process.env.TL_GASFREE_API_SECRET,
+      });
+      capabilities.gasFree = gasFreeCapability;
+      logger(`GasFree enabled (late init): ${gasFreeBaseUrl}`);
+    }
+
+    // MultiSig: swap only (requires credentials beyond just a wallet)
     if (multiSigCapability) multiSigCapability.swapWallets(newWallet);
-    logger(`Capabilities swapped to new wallet`);
+
+    logger(`Capabilities updated with new wallet`);
   };
   const walletToolDefs = getWalletToolDefinitions(server.getToolPrefix(), tronNetwork, onWalletSwap);
   const walletHandlers = new Map(walletToolDefs.map(d => [d.name, d.handler]));
@@ -307,13 +373,17 @@ async function main() {
     if (coreHandler) {
       const response = (await coreHandler(input)) as { ok: boolean; error?: { code: string; message: string } };
 
-      // Replace legacy TL_CHAIN_PRIVATE_KEY error messages with agent-wallet guidance
-      if (!response.ok && response.error?.message?.includes('TL_CHAIN_PRIVATE_KEY')) {
-        response.error.message =
-          'Wallet not available. Ensure your encrypted wallet is configured:\n' +
-          '  1. agent-wallet start local_secure --generate --wallet-id main\n' +
-          '  2. Set AGENT_WALLET_PASSWORD in your MCP config env (.mcp.json)\n' +
-          '  3. Restart Claude Code';
+      // Replace wallet-unavailable responses with unified wallet setup guidance.
+      if (
+        !response.ok &&
+        response.error &&
+        isWalletDependentTool(name) &&
+        (
+          response.error.message.includes('TL_CHAIN_PRIVATE_KEY') ||
+          (walletSetupRequired && response.error.code === 'TL_CAPABILITY_NOT_AVAILABLE')
+        )
+      ) {
+        response.error.message = walletSetupMessage;
       }
 
       return {

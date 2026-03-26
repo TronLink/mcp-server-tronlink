@@ -54,17 +54,18 @@ function getEnvPassword(): string | undefined {
   return process.env.AGENT_WALLET_PASSWORD || undefined;
 }
 
-/** Cached resolved password (env → runtime_secrets.json → auto-generate). */
+/** Cached resolved password. */
 let _resolvedPassword: string | undefined;
 
 /**
- * Resolve the wallet encryption password.
+ * Read-only password resolution — no side effects.
  *
  * Priority:
  *   1. AGENT_WALLET_PASSWORD env var
  *   2. Existing runtime_secrets.json in config dir
- *   3. Auto-generate random password and save to runtime_secrets.json
- *      (only if no existing wallets — prevents overwriting lost passwords)
+ *   3. Throw — no password available
+ *
+ * Used by resolveSecureWallet / listWallets / setActiveWallet.
  */
 function resolvePassword(): string {
   if (_resolvedPassword) return _resolvedPassword;
@@ -76,10 +77,9 @@ function resolvePassword(): string {
     return envPw;
   }
 
+  // 2. Existing runtime_secrets.json
   const configDir = getConfigDir();
   const secretsPath = join(configDir, 'runtime_secrets.json');
-
-  // 2. Existing runtime_secrets.json
   if (existsSync(secretsPath)) {
     try {
       const data = JSON.parse(readFileSync(secretsPath, 'utf-8')) as { password?: string };
@@ -88,13 +88,33 @@ function resolvePassword(): string {
         return data.password;
       }
     } catch {
-      // Corrupted file — fall through to generate
+      // Corrupted file — fall through
     }
   }
 
-  // 3. Before generating a new password, check if wallets already exist.
-  //    If they do, the old password is lost — generating a new one would
-  //    overwrite runtime_secrets.json and lock the existing wallets.
+  // 3. No password — caller decides what to do
+  throw new Error(
+    'No wallet password available.\n' +
+    'Set AGENT_WALLET_PASSWORD in your MCP config env, or let the server auto-generate on restart.',
+  );
+}
+
+/**
+ * Resolve or generate a password for auto-wallet-creation.
+ *
+ * Same as resolvePassword() but falls back to generating a new random
+ * password when none exists AND no existing wallets would be orphaned.
+ * This is the ONLY place that writes runtime_secrets.json.
+ */
+function resolveOrGeneratePassword(): string {
+  // Try read-only first
+  try {
+    return resolvePassword();
+  } catch {
+    // No password available — check if safe to generate
+  }
+
+  const configDir = getConfigDir();
   const walletConfigPath = join(configDir, 'wallets_config.json');
   const masterPath = join(configDir, 'master.json');
   if (existsSync(walletConfigPath) || existsSync(masterPath)) {
@@ -108,6 +128,7 @@ function resolvePassword(): string {
   // No existing wallets — safe to generate a fresh password
   const generated = randomBytes(32).toString('hex');
   mkdirSync(configDir, { recursive: true, mode: 0o700 });
+  const secretsPath = join(configDir, 'runtime_secrets.json');
   writeFileSync(secretsPath, JSON.stringify({ password: generated }), { mode: 0o600 });
   _resolvedPassword = generated;
   return generated;
@@ -296,11 +317,11 @@ export async function autoGenerateWallet(
 ): Promise<string | undefined> {
   const configDir = getConfigDir();
 
-  // resolvePassword() will throw if wallets exist but password is lost —
-  // that's the correct behavior (don't silently overwrite).
+  // resolveOrGeneratePassword() will throw if wallets exist but password
+  // is lost — that's the correct behavior (don't silently overwrite).
   let password: string;
   try {
-    password = resolvePassword();
+    password = resolveOrGeneratePassword();
   } catch (err) {
     logger?.(`Password resolution failed: ${err instanceof Error ? err.message : String(err)}`);
     return undefined;
