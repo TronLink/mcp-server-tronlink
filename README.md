@@ -80,7 +80,35 @@ Built on `@tronlink/tronlink-mcp-core`, it provides two operation modes:
 
 ## Quick Start
 
-### 1. Build TronLink Extension (Playwright mode only)
+### Zero-Config Mode (Fastest)
+
+Just configure `TL_TRONGRID_URL` — the server auto-generates an encrypted wallet on first launch:
+
+```json
+{
+  "mcpServers": {
+    "tronlink": {
+      "command": "node",
+      "args": ["dist/index.js"],
+      "cwd": ".",
+      "env": {
+        "TL_TRONGRID_URL": "https://nile.trongrid.io"
+      }
+    }
+  }
+}
+```
+
+On startup, the server will:
+1. Generate a random encryption password → save to `~/.agent-wallet/runtime_secrets.json`
+2. Create an encrypted wallet (`main`) → save to `~/.agent-wallet/`
+3. Print the wallet address and faucet URL to stderr
+
+> To use an existing wallet or specify your own password, set `AGENT_WALLET_PASSWORD` in env.
+
+### Manual Setup
+
+#### 1. Build TronLink Extension (Playwright mode only)
 
 ```bash
 cd /path/to/tronlink-extension-pro
@@ -89,7 +117,7 @@ npm run build
 # Output: dist/
 ```
 
-### 2. Install and Build MCP Server
+#### 2. Install and Build MCP Server
 
 ```bash
 cd /path/to/mcp-server-tronlink
@@ -97,7 +125,14 @@ npm install
 npm run build
 ```
 
-### 3. Configure MCP JSON
+#### 3. (Optional) Create Wallet Manually
+
+```bash
+npm install -g @bankofai/agent-wallet
+agent-wallet start local_secure --generate --wallet-id main
+```
+
+#### 4. Configure MCP JSON
 
 All configuration is injected via the `env` field in the MCP JSON. The server does **not** read `.env` files.
 
@@ -135,7 +170,7 @@ Calls TRON blockchain APIs directly using TronWeb-compatible REST calls and loca
 
 | Group | Tools | Required Config |
 |-------|-------|----------------|
-| **On-Chain** (14) | `tl_chain_*` | `TL_CHAIN_PRIVATE_KEY` + `TL_TRONGRID_URL` |
+| **On-Chain** (14) | `tl_chain_*` | `agent-wallet` + `TL_TRONGRID_URL` |
 | **MultiSig** (5) | `tl_multisig_*` | `TL_MULTISIG_BASE_URL` + credentials |
 | **GasFree** (3) | `tl_gasfree_*` | `TL_GASFREE_BASE_URL` + API key |
 
@@ -158,8 +193,12 @@ Calls TRON blockchain APIs directly using TronWeb-compatible REST calls and loca
 | **TronGrid API** | | |
 | `TL_TRONGRID_URL` | TronGrid full-node API URL | — |
 | `TL_TRONGRID_API_KEY` | TronGrid API Key (required for Mainnet, not needed for Nile/Shasta) | — |
+| **Wallet (agent-wallet)** | | |
+| `AGENT_WALLET_PASSWORD` | Encryption password (optional — auto-generated if not set) | Auto-generated |
+| `AGENT_WALLET_DIR` | Custom wallet storage directory | `~/.agent-wallet` |
+| `TL_OWNER_WALLET_ID` | Owner wallet ID for multisig signing | active wallet |
+| `TL_COSIGNER_WALLET_ID` | Co-signer wallet ID for multisig | — |
 | **On-Chain** | | |
-| `TL_CHAIN_PRIVATE_KEY` | Signing private key (64-char hex, **testnet only!**) | — |
 | `TL_SUNSWAP_ROUTER` | SunSwap V2 Router contract address | — |
 | `TL_SUNSWAP_V3_ROUTER` | SunSwap Smart Router (V3) contract address | — |
 | `TL_WTRX_ADDRESS` | WTRX contract address | Mainnet default |
@@ -168,8 +207,6 @@ Calls TRON blockchain APIs directly using TronWeb-compatible REST calls and loca
 | `TL_MULTISIG_SECRET_ID` | Multi-sig service Secret ID | — |
 | `TL_MULTISIG_SECRET_KEY` | Multi-sig service Secret Key (HmacSHA256 signing key) | — |
 | `TL_MULTISIG_CHANNEL` | Multi-sig service channel name | — |
-| `TL_MULTISIG_OWNER_KEY` | Multi-sig owner private key (64-char hex, **testnet only!**) | — |
-| `TL_MULTISIG_COSIGNER_KEY` | Co-signer private key (64-char hex, **testnet only!**) | — |
 | **GasFree** | | |
 | `TL_GASFREE_BASE_URL` | GasFree service URL | — |
 | `TL_GASFREE_API_KEY` | GasFree API Key | — |
@@ -177,11 +214,11 @@ Calls TRON blockchain APIs directly using TronWeb-compatible REST calls and loca
 
 > Configuring multisig env vars (`BASE_URL` + `SECRET_ID` + `SECRET_KEY` + `CHANNEL`) auto-enables the `tl_multisig_*` tools.
 >
-> Configuring `TL_CHAIN_PRIVATE_KEY` + `TL_TRONGRID_URL` enables the `tl_chain_*` on-chain tool group (14 tools).
+> Configuring `agent-wallet` + `TL_TRONGRID_URL` enables the `tl_chain_*` on-chain tool group (14 tools).
 >
 > Configuring `TL_GASFREE_BASE_URL` + `TL_GASFREE_API_KEY` enables the `tl_gasfree_*` gas-free transfer tool group (3 tools).
 >
-> **Security Warning**: `TL_CHAIN_PRIVATE_KEY`, `TL_MULTISIG_OWNER_KEY`, and `TL_MULTISIG_COSIGNER_KEY` are intended for Nile/Shasta testnet automation only. **Never use mainnet private keys!**
+> **Security**: Private keys are managed by `@bankofai/agent-wallet` with encrypted local storage (`local_secure`). Plain-text keys in env vars are not supported. If `AGENT_WALLET_PASSWORD` is not set, a random password is auto-generated and saved to `~/.agent-wallet/runtime_secrets.json`.
 
 ### API Key Acquisition Guide
 
@@ -259,6 +296,23 @@ No configuration needed for Mainnet (uses default). For Nile testnet, query the 
 
 **Production**: Contact the TronLink team for official credentials.
 
+#### Wallet Setup (Optional — auto-created if not configured)
+
+The server auto-generates an encrypted wallet on first launch if none exists. To create one manually:
+
+```bash
+# 1. Install agent-wallet CLI
+npm install -g @bankofai/agent-wallet
+
+# 2. Create an encrypted wallet
+agent-wallet start local_secure --generate --wallet-id main
+
+# 3. (Optional) Create a cosigner wallet for multisig
+agent-wallet start local_secure --generate --wallet-id cosigner
+```
+
+You can also manage wallets at runtime via MCP tools: `tl_wallet_list`, `tl_wallet_set_active`, `tl_wallet_import`.
+
 #### Quick Config Reference (Nile Testnet .mcp.json)
 
 ```json
@@ -273,7 +327,6 @@ No configuration needed for Mainnet (uses default). For Nile testnet, query the 
         "TL_MODE": "prod",
         "TL_HEADLESS": "false",
         "TL_TRONGRID_URL": "https://nile.trongrid.io",
-        "TL_CHAIN_PRIVATE_KEY": "your_64_hex_private_key",
         "TL_SUNSWAP_ROUTER": "TKzxdSv2FZKQrEqkKVgp5DcwEXBEKMg2Ax",
         "TL_SUNSWAP_V3_ROUTER": "TB6xBCixqRPUSKiXb45ky1GhChFJ7qrfFj",
         "TL_MULTISIG_BASE_URL": "https://apinile.walletadapter.org",
@@ -304,7 +357,6 @@ If you only need direct API tools (on-chain, multisig, gasfree) without browser 
       "cwd": ".",
       "env": {
         "TL_TRONGRID_URL": "https://nile.trongrid.io",
-        "TL_CHAIN_PRIVATE_KEY": "your_64_hex_private_key",
         "TL_MULTISIG_BASE_URL": "https://apinile.walletadapter.org",
         "TL_MULTISIG_SECRET_ID": "TEST",
         "TL_MULTISIG_SECRET_KEY": "TESTTESTTEST",
@@ -318,7 +370,7 @@ If you only need direct API tools (on-chain, multisig, gasfree) without browser 
 }
 ```
 
-This configuration enables 22 API tools without launching a browser. Playwright-based tools (`tl_launch`, `tl_click`, etc.) will not be available.
+This configuration enables 25 API tools (including 3 wallet management tools) without launching a browser. Playwright-based tools (`tl_launch`, `tl_click`, etc.) will not be available. `AGENT_WALLET_PASSWORD` is optional — omit it to let the server auto-generate a password.
 
 ### Extension Path Auto-Detection
 
@@ -363,9 +415,7 @@ The project includes a `.mcp.json` file. Claude Code auto-detects it. Just fill 
         "TL_MULTISIG_BASE_URL": "https://apinile.walletadapter.org",
         "TL_MULTISIG_SECRET_ID": "your-secret-id",
         "TL_MULTISIG_SECRET_KEY": "your-secret-key",
-        "TL_MULTISIG_CHANNEL": "your-channel",
-        "TL_MULTISIG_OWNER_KEY": "",
-        "TL_MULTISIG_COSIGNER_KEY": ""
+        "TL_MULTISIG_CHANNEL": "your-channel"
       }
     }
   }
@@ -387,7 +437,6 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
       "env": {
         "TRONLINK_EXTENSION_PATH": "/absolute/path/to/tronlink-extension-pro/dist",
         "TL_TRONGRID_URL": "https://nile.trongrid.io",
-        "TL_CHAIN_PRIVATE_KEY": "your_private_key",
         "TL_MULTISIG_BASE_URL": "https://apinile.walletadapter.org",
         "TL_MULTISIG_SECRET_ID": "your-secret-id",
         "TL_MULTISIG_SECRET_KEY": "your-secret-key",
@@ -410,8 +459,7 @@ Edit `~/.claude/settings.json` or project-level `.claude/settings.json`:
       "args": ["/absolute/path/to/mcp-server-tronlink/dist/index.js"],
       "env": {
         "TRONLINK_EXTENSION_PATH": "/absolute/path/to/tronlink-extension-pro/dist",
-        "TL_TRONGRID_URL": "https://nile.trongrid.io",
-        "TL_CHAIN_PRIVATE_KEY": "your_private_key"
+        "TL_TRONGRID_URL": "https://nile.trongrid.io"
       }
     }
   }
@@ -617,14 +665,14 @@ View with `tl_list_flows`:
 
 1. **Keep owner threshold=1**: When setting up multi-sig, keep the owner permission as single-sig (threshold=1) so you can always recover if active signers are unavailable
 2. **Test on testnet first**: Thoroughly test on Nile testnet before operating on Mainnet
-3. **Private key safety**: `TL_MULTISIG_OWNER_KEY` and `TL_MULTISIG_COSIGNER_KEY` are for testnet automation only — injected via MCP JSON `env` field (`.mcp.json` is in `.gitignore`). Never commit to version control
+3. **Key safety**: Private keys are encrypted via `@bankofai/agent-wallet` (`local_secure` type). Plain-text keys in env vars are not supported. Password is auto-generated to `~/.agent-wallet/runtime_secrets.json` or set via `AGENT_WALLET_PASSWORD`. Do not delete `runtime_secrets.json` — it is required to decrypt existing wallets
 4. **Transaction expiration**: Unsigned transactions expire in ~60 seconds — collect all signatures before expiration
 
 ---
 
 ## All Available Tools
 
-The server exposes 56+ tools via MCP protocol. Tools are grouped by mode:
+The server exposes 59+ tools via MCP protocol. Tools are grouped by mode:
 
 ### Playwright Mode Tools
 
@@ -648,13 +696,21 @@ The server exposes 56+ tools via MCP protocol. Tools are grouped by mode:
 
 **Flow Recipes**: `tl_list_flows` (32 built-in recipes with pre-checks)
 
-### Direct API Tools
-
-**On-Chain** (requires `TL_CHAIN_PRIVATE_KEY` + `TL_TRONGRID_URL`):
+### Wallet Management Tools
 
 | Tool | Description |
 |------|-------------|
-| `tl_chain_get_address` | Derive TRON address from configured private key |
+| `tl_wallet_list` | List all wallets with IDs, types, active status, and TRON addresses |
+| `tl_wallet_set_active` | Switch the active wallet by ID (hot-swaps into all capabilities) |
+| `tl_wallet_import` | Import a private key — encrypted immediately, never stored in plain text |
+
+### Direct API Tools
+
+**On-Chain** (requires `agent-wallet` + `TL_TRONGRID_URL`):
+
+| Tool | Description |
+|------|-------------|
+| `tl_chain_get_address` | Get TRON address from encrypted agent-wallet |
 | `tl_chain_get_account` | Query account: TRX balance, bandwidth, energy, permissions |
 | `tl_chain_get_tokens` | Query TRC10 + TRC20 token balances |
 | `tl_chain_send` | Send TRX, TRC10, or TRC20 tokens |
@@ -667,7 +723,7 @@ The server exposes 56+ tools via MCP protocol. Tools are grouped by mode:
 | `tl_chain_swap_v3` | Execute token swap via SunSwap V3 Smart Router |
 | `tl_chain_setup_multisig` | Configure multi-sig permissions (accountPermissionUpdate) |
 | `tl_chain_create_multisig_tx` | Create unsigned multi-sig transaction with permission ID |
-| `tl_chain_sign_multisig_tx` | Sign multi-sig transaction with owner or co-signer key |
+| `tl_chain_sign_multisig_tx` | Sign multi-sig transaction with owner or co-signer wallet |
 
 **Multi-Signature** (requires multisig service config):
 
@@ -728,8 +784,8 @@ Full implementation of the `ISessionManager` interface:
 | Feature | Details |
 |---------|---------|
 | **API calls** | Direct REST calls to TronGrid full-node API |
-| **Signing** | Local transaction signing via `@noble/curves` (secp256k1) |
-| **Address derivation** | Private key → public key → Keccak256 → Base58Check |
+| **Signing** | Encrypted wallet signing via `@bankofai/agent-wallet` |
+| **Address derivation** | Resolved from encrypted wallet |
 | **Supported operations** | Transfer, stake, delegate, swap (V2/V3), multisig setup/create/sign |
 | **Pre-checks** | Balance and permission validation before every transaction |
 
@@ -739,7 +795,7 @@ Full implementation of the `ISessionManager` interface:
 |---------|---------|
 | **API calls** | GasFree REST API for zero-gas TRC20 transfers |
 | **Eligibility check** | Validates account, token support, and daily quota before sending |
-| **Signing** | Local EIP-712 compatible signing for GasFree authorization |
+| **Signing** | Encrypted wallet signing via `@bankofai/agent-wallet` for GasFree authorization |
 
 ### TronLinkMultiSigCapability (Direct API Mode)
 
@@ -776,6 +832,8 @@ Full implementation of the `ISessionManager` interface:
 mcp-server-tronlink/
 ├── src/
 │   ├── index.ts                    # Entry: parse config, register capabilities, start server
+│   ├── wallet.ts                   # Unified wallet entry (agent-wallet, encrypted-only policy, auto-generate)
+│   ├── wallet-tools.ts             # MCP wallet management tools (list, switch, import)
 │   ├── session-manager.ts          # TronLinkSessionManager (full ISessionManager implementation)
 │   ├── capabilities/
 │   │   ├── build.ts                # TronLinkBuildCapability (webpack build)
@@ -786,7 +844,7 @@ mcp-server-tronlink/
 │   │   └── tron-crypto.ts          # TRON crypto utils (address derivation, signing, Base58)
 │   └── flows/
 │       ├── index.ts                # Flow registration entry (32 built-in recipes)
-│       ├── import-wallet.ts        # Import wallet flow
+│       ├── import-wallet.ts        # Import wallet flow (disabled — violates encrypted-only policy)
 │       ├── switch-network.ts       # Switch network / enable testnet
 │       ├── transfer-trx.ts         # TRX / TRC20 transfer flows
 │       ├── multisig.ts             # Multi-sig flows (6 recipes)

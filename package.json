@@ -1,6 +1,6 @@
 {
   "name": "@tronlink/mcp-server-tronlink",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "TronLink MCP Server - MCP server for controlling TronLink browser extension via AI agents",
   "license": "MIT",
   "type": "module",
@@ -21,6 +21,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@bankofai/agent-wallet": "^2.3.0",
     "@noble/curves": "^2.0.1",
     "@noble/hashes": "^2.0.1",
     "@tronlink/tronlink-mcp-core": "^0.1.0",

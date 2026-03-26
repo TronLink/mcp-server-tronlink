@@ -8,6 +8,8 @@ import type {
   MultiSigListResult,
   MultiSigTransactionDetail,
 } from '@tronlink/tronlink-mcp-core';
+import type { Wallet } from '@bankofai/agent-wallet';
+import { signTransaction as signTxWithWallet } from '../wallet.js';
 
 export interface MultiSigConfig {
   /** API base URL (e.g. https://apinile.walletadapter.org) */
@@ -25,11 +27,11 @@ export interface MultiSigConfig {
   /** TronGrid API key (optional for testnet, required for mainnet) */
   tronGridApiKey?: string;
 
-  // ── Test keys (testnet only) ────────────────────
-  /** Owner private key for signing (64-char hex, testnet only!) */
-  ownerKey?: string;
-  /** Co-signer private key (64-char hex, testnet only!) */
-  cosignerKey?: string;
+  // ── Wallet instances for signing ────────────────
+  /** Owner wallet for signing (e.g. permission updates) */
+  ownerWallet?: Wallet;
+  /** Co-signer wallet for multisig signing */
+  cosignerWallet?: Wallet;
 }
 
 /** Result of setting up multisig permissions on-chain */
@@ -111,12 +113,21 @@ export class TronLinkMultiSigCapability implements MultiSigCapability {
     return this.config.tronGridUrl;
   }
 
-  getOwnerKey(): string | undefined {
-    return this.config.ownerKey;
+  getOwnerWallet(): Wallet | undefined {
+    return this.config.ownerWallet;
   }
 
-  getCosignerKey(): string | undefined {
-    return this.config.cosignerKey;
+  getCosignerWallet(): Wallet | undefined {
+    return this.config.cosignerWallet;
+  }
+
+  /** Replace wallet references for hot-swap. */
+  swapWallets(ownerWallet?: Wallet, cosignerWallet?: Wallet): void {
+    this.config = {
+      ...this.config,
+      ownerWallet: ownerWallet ?? this.config.ownerWallet,
+      cosignerWallet: cosignerWallet ?? this.config.cosignerWallet,
+    };
   }
 
   // ── Multisig Service API (walletadapter.org) ────────────
@@ -310,8 +321,8 @@ export class TronLinkMultiSigCapability implements MultiSigCapability {
     cosignerAddress: string,
     threshold = 2,
   ): Promise<SetupPermissionsResult> {
-    if (!this.config.ownerKey) {
-      return { success: false, error: 'Owner key not configured (TL_MULTISIG_OWNER_KEY)' };
+    if (!this.config.ownerWallet) {
+      return { success: false, error: 'Owner wallet not configured' };
     }
 
     try {
@@ -347,10 +358,10 @@ export class TronLinkMultiSigCapability implements MultiSigCapability {
         return { success: false, error: String(unsignedTx.Error) };
       }
 
-      // Step 2: Sign with owner key
-      const signedTx = await this.signWithKey(
+      // Step 2: Sign with owner wallet
+      const signedTx = await signTxWithWallet(
+        this.config.ownerWallet,
         unsignedTx as Record<string, unknown>,
-        this.config.ownerKey,
       );
 
       // Step 3: Broadcast
@@ -397,55 +408,22 @@ export class TronLinkMultiSigCapability implements MultiSigCapability {
   }
 
   /**
-   * Sign a transaction with a private key (client-side ECDSA secp256k1).
-   * This is a simplified signing implementation for testing.
+   * Sign a transaction with a wallet instance.
    */
-  async signWithKey(
+  async signWithWallet(
     transaction: Record<string, unknown>,
-    privateKey: string,
+    wallet: Wallet,
   ): Promise<Record<string, unknown>> {
-    // Get raw_data_hex for signing
-    let rawDataHex = transaction.raw_data_hex as string;
-    if (!rawDataHex) {
-      throw new Error('Transaction missing raw_data_hex');
-    }
-
-    // Hash the raw_data with SHA256
-    const rawDataBuffer = Buffer.from(rawDataHex, 'hex');
-    const txHash = crypto.createHash('sha256').update(rawDataBuffer).digest();
-
-    // Sign with secp256k1 ECDSA
-    const keyBuffer = Buffer.from(privateKey, 'hex');
-    const sign = crypto.sign(null, txHash, {
-      key: crypto.createPrivateKey({
-        key: Buffer.concat([
-          // DER prefix for secp256k1 private key
-          Buffer.from(
-            '30740201010420',
-            'hex',
-          ),
-          keyBuffer,
-          Buffer.from(
-            'a00706052b8104000aa144034200',
-            'hex',
-          ),
-          // We need the public key too, derive it
-          Buffer.alloc(65), // placeholder
-        ]),
-        format: 'der',
-        type: 'sec1',
-      }),
-      dsaEncoding: 'ieee-p1363',
-    });
-
-    // Build signature hex (r + s + v)
-    const signature = sign.toString('hex') + '00';
+    // Sign a clean copy to get the new signature
+    const cleanTx = { ...transaction, signature: undefined };
+    const signedTx = await signTxWithWallet(wallet, cleanTx);
+    const newSignature = (signedTx.signature as string[])[0];
 
     // Append to existing signatures
     const existingSignatures = (transaction.signature as string[]) || [];
     return {
       ...transaction,
-      signature: [...existingSignatures, signature],
+      signature: [...existingSignatures, newSignature],
     };
   }
 

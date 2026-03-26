@@ -6,7 +6,7 @@ import type {
   GasFreeSendParams,
   GasFreeTxResult,
 } from '@tronlink/tronlink-mcp-core';
-import { privateKeyToAddress } from './tron-crypto.js';
+import type { Wallet } from '@bankofai/agent-wallet';
 
 export interface GasFreeConfig {
   /**
@@ -15,8 +15,8 @@ export interface GasFreeConfig {
    * Nile: https://open-test.gasfree.io/nile/
    */
   baseUrl: string;
-  /** Private key for signing permits (64-char hex) */
-  privateKey: string;
+  /** agent-wallet Wallet instance for signing */
+  wallet: Wallet;
   /** GasFree API Key（申请: https://developer.gasfree.io） */
   apiKey?: string;
   /** GasFree API Secret */
@@ -25,14 +25,27 @@ export interface GasFreeConfig {
 
 export class TronLinkGasFreeCapability implements GasFreeCapability {
   private config: GasFreeConfig;
-  private address: string;
-  private addressHex: string;
+  private wallet: Wallet;
+  private address!: string;
+  private initialized = false;
 
   constructor(config: GasFreeConfig) {
     this.config = config;
-    const addr = privateKeyToAddress(config.privateKey);
-    this.address = addr.address;
-    this.addressHex = addr.addressHex;
+    this.wallet = config.wallet;
+  }
+
+  /** Resolve wallet address. Must be called before using the capability. */
+  async init(): Promise<void> {
+    if (this.initialized) return;
+    this.address = await this.wallet.getAddress();
+    this.initialized = true;
+  }
+
+  /** Replace the wallet and reset cached state so the next operation re-inits. */
+  swapWallet(wallet: Wallet): void {
+    this.wallet = wallet;
+    this.config = { ...this.config, wallet };
+    this.initialized = false;
   }
 
   private async apiGet(path: string): Promise<any> {
@@ -80,6 +93,7 @@ export class TronLinkGasFreeCapability implements GasFreeCapability {
   }
 
   async getAccount(address?: string): Promise<GasFreeAccountInfo> {
+    await this.init();
     const addr = address || this.address;
 
     // Fetch supported tokens and account info in parallel
@@ -115,6 +129,7 @@ export class TronLinkGasFreeCapability implements GasFreeCapability {
   }
 
   async getTransactions(params: GasFreeTransactionParams): Promise<GasFreeTransactionList> {
+    await this.init();
     const addr = params.address || this.address;
     const limit = params.limit ?? 20;
     const offset = params.offset ?? 0;
@@ -150,6 +165,7 @@ export class TronLinkGasFreeCapability implements GasFreeCapability {
   }
 
   async send(params: GasFreeSendParams): Promise<GasFreeTxResult> {
+    await this.init();
     // Submit GasFree transfer via the official API
     // See: https://gasfree.io/specification
     const result = await this.apiPost('api/v1/gasfree/submit', {

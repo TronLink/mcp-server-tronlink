@@ -7,7 +7,7 @@ export const chainCheckBalanceFlow: FlowRecipe = {
     'Query TRX balance, bandwidth, energy, and account activation status directly via TronGrid API.',
   context: 'both',
   preconditions: [
-    'On-chain capability configured (TL_CHAIN_PRIVATE_KEY + TL_TRONGRID_URL)',
+    'On-chain capability configured (agent-wallet + TL_TRONGRID_URL)',
   ],
   params: [
     {
