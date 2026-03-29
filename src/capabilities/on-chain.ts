@@ -1,5 +1,7 @@
-import { privateKeyToAddress, signTransaction, addressToHex, base58CheckDecode } from './tron-crypto.js';
+import { addressToHex, base58CheckDecode } from './tron-crypto.js';
 import { bytesToHex } from '@noble/hashes/utils.js';
+import type { Wallet } from '@bankofai/agent-wallet';
+import { signTransaction as signTxWithWallet } from '../wallet.js';
 import type {
   OnChainCapability,
   ChainAccountInfo,
@@ -27,14 +29,14 @@ import type {
 // ── Configuration ──────────────────────────────────────────
 
 export interface OnChainConfig {
-  /** 64-char hex private key */
-  privateKey: string;
+  /** agent-wallet Wallet instance for signing */
+  wallet: Wallet;
   /** TronGrid full-node URL, e.g. https://nile.trongrid.io */
   tronGridUrl: string;
   /** Optional TronGrid API key (required on mainnet) */
   tronGridApiKey?: string;
-  /** Optional co-signer private key (64-char hex) */
-  cosignerKey?: string;
+  /** Optional co-signer wallet instance */
+  cosignerWallet?: Wallet;
   /** Optional SunSwap V2 router address (base58) — auto-detected if omitted */
   sunswapRouter?: string;
   /** Optional SunSwap V3 router address (base58) — auto-detected if omitted */
@@ -198,16 +200,54 @@ function to20ByteHex(address: string): string {
 
 export class TronLinkOnChainCapability implements OnChainCapability {
   private config: OnChainConfig;
-  private address: string;
-  private addressHex: string;
+  private wallet: Wallet;
+  private address!: string;
+  private addressHex!: string;
   private swapConstants: SwapNetworkConstants;
+  private initialized = false;
+  private initPromise: Promise<void> | null = null;
+  private generation = 0;
 
   constructor(config: OnChainConfig) {
     this.config = config;
-    const addr = privateKeyToAddress(config.privateKey);
-    this.address = addr.address;
-    this.addressHex = addr.addressHex;
+    this.wallet = config.wallet;
     this.swapConstants = getSwapConstants(config.tronGridUrl);
+  }
+
+  /** Resolve wallet address. Guarded against concurrent, stale, and failed calls. */
+  async init(): Promise<void> {
+    if (this.initialized) return;
+    if (!this.initPromise) {
+      const gen = this.generation;
+      this.initPromise = (async () => {
+        try {
+          const addr = await this.wallet.getAddress();
+          if (gen !== this.generation) return; // stale — wallet swapped mid-init
+          this.address = addr;
+          this.addressHex = addressToHex(addr);
+          this.initialized = true;
+        } catch (err) {
+          if (gen === this.generation) this.initPromise = null; // allow retry
+          throw err;
+        }
+      })();
+    }
+    return this.initPromise;
+  }
+
+  /** Replace the wallet and reset cached state so the next operation re-inits. */
+  swapWallet(wallet: Wallet, cosignerWallet?: Wallet): void {
+    this.wallet = wallet;
+    this.config = { ...this.config, wallet, cosignerWallet: cosignerWallet ?? this.config.cosignerWallet };
+    this.initialized = false;
+    this.initPromise = null;
+    this.generation++;
+  }
+
+  private ensureInit(): void {
+    if (!this.initialized) {
+      throw new Error('OnChainCapability not initialized. Call init() first.');
+    }
   }
 
   // ── Internal: HTTP helpers ──────────────────────────────
@@ -262,17 +302,7 @@ export class TronLinkOnChainCapability implements OnChainCapability {
   private async signAndBroadcast(
     unsignedTx: Record<string, unknown>,
   ): Promise<{ success: boolean; txId: string }> {
-    const rawDataHex = unsignedTx.raw_data_hex as string;
-    if (!rawDataHex) {
-      throw new Error('Transaction is missing raw_data_hex');
-    }
-
-    const signature = signTransaction(rawDataHex, this.config.privateKey);
-
-    const signedTx = {
-      ...unsignedTx,
-      signature: [signature],
-    };
+    const signedTx = await signTxWithWallet(this.wallet, unsignedTx);
 
     const result = await this.tronGridPost('/wallet/broadcasttransaction', signedTx);
 
@@ -303,12 +333,14 @@ export class TronLinkOnChainCapability implements OnChainCapability {
   // ── 1. getAddress ───────────────────────────────────────
 
   async getAddress(): Promise<{ address: string; addressHex: string }> {
+    await this.init();
     return { address: this.address, addressHex: this.addressHex };
   }
 
   // ── 2. getAccount ───────────────────────────────────────
 
   async getAccount(address?: string): Promise<ChainAccountInfo> {
+    await this.init();
     const addr = this.resolveAddress(address);
 
     const [account, resources] = await Promise.all([
@@ -345,6 +377,7 @@ export class TronLinkOnChainCapability implements OnChainCapability {
   // ── 3. getTokens ────────────────────────────────────────
 
   async getTokens(address?: string): Promise<ChainTokensInfo> {
+    await this.init();
     const addr = this.resolveAddress(address);
 
     const [v1Data, account] = await Promise.all([
@@ -428,6 +461,7 @@ export class TronLinkOnChainCapability implements OnChainCapability {
   // ── 4. send ─────────────────────────────────────────────
 
   async send(params: ChainSendParams): Promise<ChainTxResult> {
+    await this.init();
     const tokenType = (params.token_type || 'TRX').toUpperCase();
 
     if (tokenType === 'TRX') {
@@ -559,6 +593,7 @@ export class TronLinkOnChainCapability implements OnChainCapability {
   // ── 6. getHistory ──────────────────────────────────────
 
   async getHistory(params: ChainHistoryParams): Promise<ChainTransactionList> {
+    await this.init();
     const addr = this.resolveAddress(params.address);
     const limit = params.limit ?? 20;
 
@@ -580,6 +615,7 @@ export class TronLinkOnChainCapability implements OnChainCapability {
   // ── 7. stake ───────────────────────────────────────────
 
   async stake(params: ChainStakeParams): Promise<ChainTxResult> {
+    await this.init();
     const amountSun = toSun(params.amount_trx);
     const resource = params.resource || 'BANDWIDTH';
 
@@ -618,6 +654,7 @@ export class TronLinkOnChainCapability implements OnChainCapability {
   // ── 8. resource ────────────────────────────────────────
 
   async resource(params: ChainResourceParams): Promise<ChainResourceResult> {
+    await this.init();
     const resource = params.resource || 'BANDWIDTH';
 
     if (params.action === 'query') {
@@ -679,6 +716,7 @@ export class TronLinkOnChainCapability implements OnChainCapability {
   // ── 9. swap (Router API + V2 fallback) ─────────────────
 
   async swap(params: ChainSwapParams): Promise<ChainSwapResult> {
+    await this.init();
     const slippage = params.slippage ?? 0.5; // 0.5% default
     const amountIn = BigInt(params.amount);
     const isTrxIn = params.from_token.toUpperCase() === 'TRX';
@@ -900,6 +938,7 @@ export class TronLinkOnChainCapability implements OnChainCapability {
   // ── 10. setupMultisig ──────────────────────────────────
 
   async setupMultisig(params: ChainSetupMultisigParams): Promise<ChainTxResult> {
+    await this.init();
     const keys = [
       { address: this.address, weight: 1 },
       ...params.cosigner_addresses.map((addr) => ({ address: addr, weight: 1 })),
@@ -941,6 +980,7 @@ export class TronLinkOnChainCapability implements OnChainCapability {
   // ── 11. createMultisigTx ───────────────────────────────
 
   async createMultisigTx(params: ChainCreateMultisigTxParams): Promise<ChainUnsignedTxResult> {
+    await this.init();
     const unsignedTx = await this.tronGridPost('/wallet/createtransaction', {
       owner_address: this.address,
       to_address: params.to,
@@ -962,39 +1002,38 @@ export class TronLinkOnChainCapability implements OnChainCapability {
   // ── 12. signMultisigTx ────────────────────────────────
 
   async signMultisigTx(params: ChainSignMultisigTxParams): Promise<ChainSignedTxResult> {
-    const rawDataHex = params.transaction.raw_data_hex as string;
-    if (!rawDataHex) {
-      throw new Error('Transaction is missing raw_data_hex');
-    }
-
-    let signingKey: string;
+    let signingWallet: Wallet;
     if (params.use_cosigner) {
-      if (!this.config.cosignerKey) {
-        throw new Error('Cosigner key not configured. Set cosignerKey in OnChainConfig.');
+      if (!this.config.cosignerWallet) {
+        throw new Error('Cosigner wallet not configured. Provide cosignerWallet in OnChainConfig.');
       }
-      signingKey = this.config.cosignerKey;
+      signingWallet = this.config.cosignerWallet;
     } else {
-      signingKey = this.config.privateKey;
+      signingWallet = this.wallet;
     }
 
-    const signature = signTransaction(rawDataHex, signingKey);
+    // Sign a clean copy (without existing signatures) to get the new signature
+    const cleanTx = { ...params.transaction, signature: undefined };
+    const signedTx = await signTxWithWallet(signingWallet, cleanTx);
+    const newSignature = (signedTx.signature as string[])[0];
 
     const existingSignatures = (params.transaction.signature as string[]) || [];
-    const signedTx = {
+    const finalTx = {
       ...params.transaction,
-      signature: [...existingSignatures, signature],
+      signature: [...existingSignatures, newSignature],
     };
 
     return {
-      transaction: signedTx,
+      transaction: finalTx,
       tx_id: params.transaction.txID as string,
-      signature,
+      signature: newSignature,
     };
   }
 
   // ── 13. getStakingInfo ────────────────────────────────
 
   async getStakingInfo(address?: string): Promise<ChainStakingInfo> {
+    await this.init();
     const addr = address || this.address;
 
     const account = await this.tronGridPost('/wallet/getaccount', {
@@ -1056,6 +1095,7 @@ export class TronLinkOnChainCapability implements OnChainCapability {
   // ── 14. swapV3 (Router API + V3 router execution) ──────
 
   async swapV3(params: ChainSwapV3Params): Promise<ChainSwapV3Result> {
+    await this.init();
     const feeTier = params.fee_tier ?? 3000;
     const slippage = params.slippage ?? 0.5;
     const amountIn = BigInt(params.amount);

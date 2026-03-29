@@ -114,3 +114,6 @@ build
 /blob-report/
 /tests/**-snapshots/**-darwin.png
 test-artifacts/
+.claude/
+.githooks/
+.security-reports/

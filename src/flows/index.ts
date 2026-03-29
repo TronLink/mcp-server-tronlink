@@ -1,5 +1,6 @@
 import { getFlowRegistry } from '@tronlink/tronlink-mcp-core';
-import { importWalletFlow } from './import-wallet.js';
+// NOTE: importWalletFlow removed — it passes a private key through the MCP
+// call chain into the browser, which violates the encrypted-wallet-only policy.
 import {
   switchNetworkFlow,
   enableTestNetworksFlow,
@@ -36,7 +37,6 @@ import {
  * All built-in flow recipes for TronLink MCP Server.
  */
 export const builtinFlows = [
-  importWalletFlow,
   enableTestNetworksFlow,
   switchNetworkFlow,
   transferTrxFlow,
@@ -76,7 +76,6 @@ export function registerFlows(): void {
 }
 
 export {
-  importWalletFlow,
   switchNetworkFlow,
   enableTestNetworksFlow,
   transferTrxFlow,
