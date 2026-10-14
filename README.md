@@ -209,9 +209,9 @@ Calls TRON blockchain APIs directly using TronWeb-compatible REST calls and loca
 | `TL_OWNER_WALLET_ID` | Owner wallet ID for multisig signing | active wallet |
 | `TL_COSIGNER_WALLET_ID` | Co-signer wallet ID for multisig | — |
 | **On-Chain** | | |
-| `TL_SUNSWAP_ROUTER` | SunSwap V2 Router contract address | — |
-| `TL_SUNSWAP_V3_ROUTER` | SunSwap Smart Router (V3) contract address | — |
-| `TL_WTRX_ADDRESS` | WTRX contract address | Mainnet default |
+| `TL_SUNSWAP_ROUTER` | SunSwap V2 Router contract address | Official router for the network |
+| `TL_SUNSWAP_V3_ROUTER` | SunSwap V3 SwapRouter contract address | Official router for the network |
+| `TL_WTRX_ADDRESS` | WTRX contract address | WTRX for the network |
 | **Multi-Signature** | | |
 | `TL_MULTISIG_BASE_URL` | Multi-sig service API URL | — |
 | `TL_MULTISIG_SECRET_ID` | Multi-sig service Secret ID | — |
@@ -268,18 +268,18 @@ Calls TRON blockchain APIs directly using TronWeb-compatible REST calls and loca
 3. Fill in `TL_GASFREE_API_KEY` and `TL_GASFREE_API_SECRET`
 4. Note: Nile testnet also requires a key, but approval is fast
 
-#### SunSwap Smart Router Address (DEX trading)
+#### SunSwap Router Addresses (DEX trading)
 
-> Used by `tl_chain_swap_v3` — token swaps via SunSwap V3 concentrated liquidity
+> `tl_chain_swap` uses the SunSwap V2 Router; `tl_chain_swap_v3` uses the SunSwap V3 SwapRouter (`exactInputSingle`).
 
-| Network | Smart Router Address | Source |
-|---------|---------------------|--------|
-| **Mainnet** | `TCFNp179Lg46D16zKoumd4Poa2WFFdtqYj` | [SUN.io Docs](https://docs.sun.io/developers/swap/smart-router) |
-| **Nile** | `TB6xBCixqRPUSKiXb45ky1GhChFJ7qrfFj` | Same |
+| Network | V2 Router (`TL_SUNSWAP_ROUTER`) | V3 SwapRouter (`TL_SUNSWAP_V3_ROUTER`) |
+|---------|---------------------|---------------------|
+| **Mainnet** | `TNJVzGqKBWkJxJB5XYSqGAwUTV15U24pPq` | `TQAvWQpT9H916GckwWDJNhYZvQMkuRL7PN` |
+| **Nile** | `TYMjxCXfqLpMWW1QToP6hbcjpion7EE25p` | `TFkswj6rUfK3cQtFGzungCkNXxD2UCpEVD` |
 
-No application needed — just set the address in `TL_SUNSWAP_V3_ROUTER`.
+Source: SunSwap official contract addresses ([V2](https://docs.sun.io/protocols/sunswap-v2/reference/contract/), [V3](https://docs.sun.io/protocols/sunswap-v3/reference/contract/)). These are the built-in defaults, so no configuration is needed; set the variables only to override them.
 
-The Smart Router is SunSwap's unified entry point that automatically selects the optimal route across V1/V2/V3/PSM/SunCurve pools.
+> The SunSwap Smart Router (`TCFNp…` / `TB6x…`) is **not** compatible with `TL_SUNSWAP_V3_ROUTER` — it does not implement `exactInputSingle`.
 
 #### WTRX Contract Address
 
@@ -288,9 +288,9 @@ The Smart Router is SunSwap's unified entry point that automatically selects the
 | Network | WTRX Address |
 |---------|-------------|
 | **Mainnet** | `TNUC9Qb1rRpS5CbWLmNMxXBjyFoydXjWFR` (default, no manual config needed) |
-| **Nile** | Query via SunSwap Router's `WETH()` method |
+| **Nile** | `TYsbWxNnyTgsZaTFaue9hqpxkU3Fkco94a` (default, no manual config needed) |
 
-No configuration needed for Mainnet (uses default). For Nile testnet, query the address and set `TL_WTRX_ADDRESS`.
+No configuration needed — the default matches the WTRX used by the network's SunSwap Router.
 
 #### Multi-Signature Service Credentials
 
@@ -343,8 +343,8 @@ You can also manage wallets at runtime via MCP tools: `tl_wallet_list`, `tl_wall
         "TL_HEADLESS": "false",
         "TL_TRONGRID_URL": "https://nile.trongrid.io",
         "AGENT_WALLET_PASSWORD": "your-wallet-password",
-        "TL_SUNSWAP_ROUTER": "TKzxdSv2FZKQrEqkKVgp5DcwEXBEKMg2Ax",
-        "TL_SUNSWAP_V3_ROUTER": "TB6xBCixqRPUSKiXb45ky1GhChFJ7qrfFj",
+        "TL_SUNSWAP_ROUTER": "TYMjxCXfqLpMWW1QToP6hbcjpion7EE25p",
+        "TL_SUNSWAP_V3_ROUTER": "TFkswj6rUfK3cQtFGzungCkNXxD2UCpEVD",
         "TL_MULTISIG_BASE_URL": "https://apinile.walletadapter.org",
         "TL_MULTISIG_SECRET_ID": "TEST",
         "TL_MULTISIG_SECRET_KEY": "TESTTESTTEST",
@@ -536,9 +536,10 @@ User: Swap 10 TRX for USDT
 
 AI executes:
 1. tl_chain_swap_v3({
+     action: "execute",
      from_token: "TRX",
      to_token: "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
-     amount: "10",
+     amount: "10000000",   // smallest unit: 10 TRX = 10,000,000 sun
      slippage: 1
    })
    → { txId: "...", amountOut: "1.52", ... }
@@ -741,7 +742,7 @@ The server exposes 55+ tools via MCP protocol. Tools are grouped by mode:
 | `tl_chain_get_staking` | Query staking status: frozen amounts, votes, pending unfreezing |
 | `tl_chain_resource` | Delegate/undelegate bandwidth or energy resources |
 | `tl_chain_swap` | Estimate or execute token swap via SunSwap V2 |
-| `tl_chain_swap_v3` | Execute token swap via SunSwap V3 Smart Router |
+| `tl_chain_swap_v3` | Estimate or execute token swap via SunSwap V3 SwapRouter |
 | `tl_chain_setup_multisig` | Configure multi-sig permissions (accountPermissionUpdate) |
 | `tl_chain_create_multisig_tx` | Create unsigned multi-sig transaction with permission ID |
 | `tl_chain_sign_multisig_tx` | Sign multi-sig transaction with owner or co-signer wallet |
