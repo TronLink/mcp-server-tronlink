@@ -37,15 +37,18 @@ export interface OnChainConfig {
   tronGridApiKey?: string;
   /** Optional co-signer wallet instance */
   cosignerWallet?: Wallet;
-  /** Optional SunSwap V2 router address (base58) — auto-detected if omitted */
+  /** Optional SunSwap V2 router address (base58) — defaults to the official router for the detected network */
   sunswapRouter?: string;
-  /** Optional SunSwap V3 router address (base58) — auto-detected if omitted */
+  /** Optional SunSwap V3 SwapRouter address (base58) — defaults to the official router for the detected network */
   sunswapV3Router?: string;
   /** WTRX address — auto-detected from network if omitted */
   wtrxAddress?: string;
 }
 
-// ── Network-aware SunSwap constants (from sun-mcp-server) ──
+// ── Network-aware SunSwap constants ──
+// Router addresses follow SunSwap's official contract lists:
+//   V2: https://docs.sun.io/protocols/sunswap-v2/reference/contract/
+//   V3: https://docs.sun.io/protocols/sunswap-v3/reference/contract/
 
 interface SwapNetworkConstants {
   wtrx: string;
@@ -57,7 +60,7 @@ interface SwapNetworkConstants {
 
 const SWAP_MAINNET: SwapNetworkConstants = {
   wtrx: 'TNUC9Qb1rRpS5CbWLmNMxXBjyFoydXjWFR',
-  v2Router: 'TKzxdSv2FZKQrEqkKVgp5DcwEXBEKMg2Ax',
+  v2Router: 'TNJVzGqKBWkJxJB5XYSqGAwUTV15U24pPq',
   v3Router: 'TQAvWQpT9H916GckwWDJNhYZvQMkuRL7PN',
   routerApiUrl: 'https://rot.endjgfsv.link',
   trxAddress: 'T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb',
@@ -65,8 +68,8 @@ const SWAP_MAINNET: SwapNetworkConstants = {
 
 const SWAP_NILE: SwapNetworkConstants = {
   wtrx: 'TYsbWxNnyTgsZaTFaue9hqpxkU3Fkco94a',
-  v2Router: 'TMn1qrmYUMSTXo9babrJLzepKZoPC7M6Sy',
-  v3Router: 'TQAvWQpT9H916GckwWDJNhYZvQMkuRL7PN',
+  v2Router: 'TYMjxCXfqLpMWW1QToP6hbcjpion7EE25p',
+  v3Router: 'TFkswj6rUfK3cQtFGzungCkNXxD2UCpEVD',
   routerApiUrl: 'https://tnrouter.endjgfsv.link',
   trxAddress: 'T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb',
 };

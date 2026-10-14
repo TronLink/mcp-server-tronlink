@@ -442,7 +442,7 @@ export const chainSwapV3Flow: FlowRecipe = {
     },
     {
       name: 'fee_tier',
-      description: 'Pool fee tier in bps (500, 3000, 10000)',
+      description: 'Pool fee tier in parts per million (500 = 0.05%, 3000 = 0.3%, 10000 = 1%)',
       required: false,
       example: '3000',
     },
