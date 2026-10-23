@@ -280,7 +280,7 @@ async function main() {
   // Create MCP server
   const server = createMcpServer({
     name: 'TronLink MCP Server',
-    version: '0.1.2',
+    version: '0.1.3',
     logger,
     onCleanup: async () => {
       logger('Server shutting down...');
