@@ -891,7 +891,7 @@ mcp-server-tronlink/
 
 ## Requirements
 
-- **Node.js** >= 20
+- **Node.js** 24.22.1
 - **Playwright** >= 1.49 (with Chromium) — only needed for Playwright mode
 - **Built TronLink extension** (`dist/` with `manifest.json`) — only needed for Playwright mode
 
